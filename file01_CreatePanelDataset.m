@@ -1,5 +1,7 @@
 clear; clc;
 
+%This file creates the panel dataset for Advanta
+
 
 %% Import Card_Mpr
 
