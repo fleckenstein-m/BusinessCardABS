@@ -1183,10 +1183,96 @@ Advanta_ABCMT_Tbl.Px_TreasDisc = tmpTbl.Px_TreasDisc;
 Advanta_ABCMT_Tbl.DeltaPxTreas = tmpTbl.DeltaPxTreas;
 
 
+
+%% load Libor 1m rates, calculate coupon rates for current month, and get full prices
+load('E:\Dropbox\Work\Research\CreditCardABS\Data\Controlvariables\GetControlVariables.mat')
+Libor1m = ControlVariables(:,"US0001M_Index");
+Advanta_ABCMT_Tbl.PxFullNotSwapped_Last = NaN(height(Advanta_ABCMT_Tbl),1); 
+Advanta_ABCMT_Tbl.CpnCFlow = NaN(height(Advanta_ABCMT_Tbl),1); 
+Advanta_ABCMT_Tbl = sortrows(Advanta_ABCMT_Tbl,["Var","Date"]);
+
+for rowSelect = 1:height(Advanta_ABCMT_Tbl)
+   
+    currDate = Advanta_ABCMT_Tbl.Date(rowSelect);
+    currMonth = month(currDate);
+    currYear = year(currDate);
+    currExpMatDate = Advanta_ABCMT_Tbl.Mtg_Exp_Mty_Dt(rowSelect);
+    currFltSpread = Advanta_ABCMT_Tbl.Flt_Spread(rowSelect);
+    currPx = Advanta_ABCMT_Tbl.Px_Last(rowSelect);
+    currAccrFrac = Advanta_ABCMT_Tbl.AccrFract(rowSelect);
+    
+    if ~isnan(currPx)
+        %get 1m Libor rate current coupon period (used for AccrInt)
+        currL1DetDate = busdate(busdate(datetime(currYear,currMonth,day(currExpMatDate)),-1),-1); %two business days prior
+        prevL1DetDate = currL1DetDate - calmonths(1);
+
+        %get 1m Libor rates previous coupon period (used for Coupon payment)
+        idxCurrL1 = find(Libor1m.Date<=currL1DetDate,1,'last');
+        currL1 = Libor1m.US0001M_Index(idxCurrL1);
+        idxPrevL1 = find(Libor1m.Date<=prevL1DetDate,1,'last');
+        prevL1 = Libor1m.US0001M_Index(idxPrevL1);
+
+        %get coupon payment current month
+        currCpnRate = (prevL1+currFltSpread/100); %in percent
+        currCpnCf = currCpnRate/12; %per 100 notional
+        Advanta_ABCMT_Tbl.CpnCFlow(rowSelect) = currCpnCf;
+
+        %get accrued interest month-end
+        currAccrInt = currAccrFrac.*(currL1+currFltSpread/100)/12;
+        Advanta_ABCMT_Tbl.PxFullNotSwapped_Last(rowSelect) = currPx + currAccrInt;
+    end
+    
+end
+
+
+%% calculate total returns
+
+%sort by Var and then by Date
+Advanta_ABCMT_Tbl = sortrows(Advanta_ABCMT_Tbl,["Var","Date"]);
+Advanta_ABCMT_Tbl.RxTotal_Notswapped = NaN(height(Advanta_ABCMT_Tbl),1);
+Advanta_ABCMT_Tbl.RxTotal_SwappedToFixed = NaN(height(Advanta_ABCMT_Tbl),1);
+Advanta_ABCMT_Tbl.RxTotal_TreasuryPrice = NaN(height(Advanta_ABCMT_Tbl),1);
+firstIdx = 1;
+for rowSelect = 2:height(Advanta_ABCMT_Tbl)
+   
+    currVar = Advanta_ABCMT_Tbl.Var(rowSelect);
+    prevVar = Advanta_ABCMT_Tbl.Var(rowSelect-1);
+    if currVar == prevVar 
+        currPxFull = Advanta_ABCMT_Tbl.PxFullNotSwapped_Last(rowSelect);
+        currCpnCf = Advanta_ABCMT_Tbl.CpnCFlow(rowSelect);
+        prevPxFull = Advanta_ABCMT_Tbl.PxFullNotSwapped_Last(rowSelect-1);
+        Advanta_ABCMT_Tbl.RxTotal_Notswapped(rowSelect) = ((currPxFull + currCpnCf)-prevPxFull) ./ prevPxFull;
+        
+        %Swapped to fixed returns
+        currPxFull = Advanta_ABCMT_Tbl.PxFull_Last(rowSelect);
+        currCpnCf = Advanta_ABCMT_Tbl.CpnSwapped_ActAct(rowSelect);
+        prevPxFull = Advanta_ABCMT_Tbl.PxFull_Last(rowSelect-1);
+        Advanta_ABCMT_Tbl.RxTotal_SwappedToFixed(rowSelect) = ((currPxFull + currCpnCf)-prevPxFull) ./ prevPxFull;
+        
+        
+        %Treasury priced returns
+        %currPxFull = Advanta_ABCMT_Tbl.PxFull_Last(rowSelect) + Advanta_ABCMT_Tbl.DeltaPxTreas(rowSelect);
+        currPxFull = Advanta_ABCMT_Tbl.Px_TreasDisc(rowSelect) + Advanta_ABCMT_Tbl.AccrInt_ActAct(rowSelect);
+        currCpnCf  = Advanta_ABCMT_Tbl.CpnSwapped_ActAct(rowSelect);
+        prevPxFull = Advanta_ABCMT_Tbl.Px_TreasDisc(rowSelect-1) + Advanta_ABCMT_Tbl.AccrInt_ActAct(rowSelect-1);
+        Advanta_ABCMT_Tbl.RxTotal_TreasuryPrice(rowSelect) = ((currPxFull + currCpnCf)-prevPxFull) ./ prevPxFull;
+        
+        firstIdx= firstIdx + 1;
+    elseif currVar ~= prevVar
+       firstIdx = 1;
+       Advanta_ABCMT_Tbl.RxTotal_Notswapped(rowSelect) = NaN;
+       Advanta_ABCMT_Tbl.RxTotal_SwappedToFixed(rowSelect) = NaN;
+       Advanta_ABCMT_Tbl.RxTotal_TreasuryPrice(rowSelect) = NaN;
+       continue;
+    end
+    
+end
+
+
 %% save
 
-filePath = "E:\Dropbox\Work\Research\CreditCardABS\Data\ABCMT\";
-%filePath = "C:\Users\mflec\Dropbox\Work\Research\CreditCardABS\Data\ABCMT\";
+filePath = "E:\Dropbox\Work\Research\BusinessCardABS\Analysis\";
+%filePath = "C:\Users\mflec\Dropbox\Work\Research\BusinessCardABS\Analysis\";
 fileName = "file01_CreatePanelDataset.mat";
 save(strcat(filePath,fileName),'Advanta_ABCMT_Tbl')
 
